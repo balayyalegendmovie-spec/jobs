@@ -1,0 +1,18 @@
+name: Job Showcase Bot
+on:
+  schedule:
+    - cron: '0 */4 * * *' # Runs every 4 hours
+  workflow_dispatch:
+
+jobs:
+  hunt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    - run: pip install aiohttp gspread google-auth feedparser
+    - run: python main.py
+      env:
+        GOOGLE_SHEET_CREDS: ${{ secrets.GOOGLE_SHEET_CREDS }}
