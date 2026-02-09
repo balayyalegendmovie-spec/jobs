@@ -113,7 +113,15 @@ async def search_google(session, query, start_page):
 # 3. MAIN
 # ==========================================
 async def main():
-    creds = Credentials.from_service_account_info(json.loads(os.environ['GOOGLE_SHEET_CREDS']), scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    # 👇 REPLACED BLOCK
+    creds = Credentials.from_service_account_info(
+        json.loads(os.environ['GOOGLE_SHEET_CREDS']),
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"  # <--- THIS WAS MISSING
+        ]
+    )
+    # 👆 END REPLACEMENT
     client = gspread.authorize(creds)
     sheet = client.open("Job_Search_Master").sheet1 
     existing_links = set(sheet.col_values(5)[1:]) 
