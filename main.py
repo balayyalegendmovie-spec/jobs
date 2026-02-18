@@ -13,14 +13,9 @@ from google.oauth2.service_account import Credentials
 # 1. CONFIGURATION (THE HYDRA 🐉)
 # ==========================================
 
-# 🔍 SEARCH POOLS (6 Pairs of Keys + CX)
+# 🔍 SEARCH POOLS (Only using 1 confirmed working key)
 SEARCH_POOLS = [
-    {"key": "AIzaSyDqazTp1lPu19jIZ2nwSfyJ0keuftJQ3kk", "cx": "c7ee09e77d76e4b36"},
-    {"key": "AIzaSyAISr7pZjnQCeI32fPSBouV7M4Kr-IAEhc", "cx": "b23ffd20d869042a3"},
-    {"key": "AIzaSyAUgzK82Di989mhVwM9BHj2ih96ESWd3Cw", "cx": "90813680ab6ed428e"},
-    {"key": "AIzaSyAX9zWw-dYB6ECIFk8ZLbQ5cpUbBjRBVnE", "cx": "94e6f9a0337d64245"},
-    {"key": "AIzaSyAfX5sDpctkX1k5oEcTw7ISYRJZC8uyz70", "cx": "c4525b25604874368"},
-    {"key": "AIzaSyAOjfOs-YnVe51bhK7qp5IZMUonhCs06nU", "cx": "a5f8b4ed6e9354ea0"}
+    {"key": "AIzaSyDqazTp1lPu19jIZ2nwSfyJ0keuftJQ3kk", "cx": "c7ee09e77d76e4b36"}
 ]
 
 # 🧠 GEMINI AI KEYS (6 Keys)
@@ -202,19 +197,20 @@ async def main():
             matches = await check_jobs_gemini(session, txt)
             if matches is None: matches = await check_jobs_groq(session, txt)
             
-            for m in matches:
-                if isinstance(m, int) and m < len(chunk):
-                    job = chunk[m]
-                    print(f"✅ MATCH: {job['title']}")
-                    row = ["New", "AI Match", job['title'], "Unknown", job['clean_link'], str(datetime.now())]
-                    new_rows.append(row)
-                    
-                    # TELEGRAM ALERT
-                    kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
-                    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                    payload = {"chat_id": CHAT_ID, "text": f"🤖 <b>JOB ALERT</b>\n{job['title']}\n{job['clean_link']}", "parse_mode": "HTML", "reply_markup": kb}
-                    await session.post(url, json=payload)
-                    next_row += 1
+            if matches:
+                for m in matches:
+                    if isinstance(m, int) and m < len(chunk):
+                        job = chunk[m]
+                        print(f"✅ MATCH: {job['title']}")
+                        row = ["New", "AI Match", job['title'], "Unknown", job['clean_link'], str(datetime.now())]
+                        new_rows.append(row)
+                        
+                        # TELEGRAM ALERT
+                        kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
+                        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+                        payload = {"chat_id": CHAT_ID, "text": f"🤖 <b>JOB ALERT</b>\n{job['title']}\n{job['clean_link']}", "parse_mode": "HTML", "reply_markup": kb}
+                        await session.post(url, json=payload)
+                        next_row += 1
 
     # 4. SAVE TO SHEET
     if new_rows: 
