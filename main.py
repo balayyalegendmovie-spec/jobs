@@ -183,6 +183,7 @@ async def main():
         print(f"❌ Error Opening Sheet: {e}", flush=True)
         return
 
+    # ⚠️ Kept exactly as column 5 (E) to match your existing sheet
     existing_links = set(sheet.col_values(5)[1:]) 
     next_row = len(sheet.col_values(1)) + 1 
     
@@ -226,7 +227,18 @@ async def main():
                     if isinstance(idx, int) and idx < len(chunk):
                         job = chunk[idx]
                         print(f"⭐ MATCH FOUND: {job['title']} (Match: {match_pct}%, Suitability: {suitability}%)", flush=True)
-                        row = ["New", f"Match: {match_pct}% | Suit: {suitability}%", job['title'], "Unknown", job['clean_link'], str(datetime.now())]
+                        
+                        # ⚠️ Appending exactly 8 columns (Status, Verdict, Role, Company, Link, Date, Match%, Suitability%)
+                        row = [
+                            "New",                  # Col 1 (A)
+                            "AI Match",             # Col 2 (B)
+                            job['title'],           # Col 3 (C)
+                            "Unknown",              # Col 4 (D)
+                            job['clean_link'],      # Col 5 (E)
+                            str(datetime.now()),    # Col 6 (F)
+                            f"{match_pct}%",        # Col 7 (G)
+                            f"{suitability}%"       # Col 8 (H)
+                        ]
                         new_rows.append(row)
                         
                         kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
