@@ -15,7 +15,7 @@ from google.oauth2.service_account import Credentials
 
 # 🔍 SEARCH POOLS (Only using 1 confirmed working key)
 SEARCH_POOLS = [
-    {"key": "AIzaSyDqazTp1lPu19jIZ2nwSfyJ0keuftJQ3kk", "cx": "c7ee09e77d76e4b36"}
+    {"key": "AIzaSyAvqfb0VoXrf5RAiM_ToVM0Cr4fnPvtmd4", "cx": "c7ee09e77d76e4b36"}
 ]
 
 # 🧠 GEMINI AI KEYS (6 Keys)
