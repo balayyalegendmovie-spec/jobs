@@ -13,12 +13,14 @@ from google.oauth2.service_account import Credentials
 # 1. CONFIGURATION (THE HYDRA 🐉)
 # ==========================================
 
-# 🔍 SEARCH POOLS (Using the proven keys from Apps Script)
 SEARCH_POOLS = [
-    {"key": "AIzaSyA2jTA_ju3HzDWFVUNXsUwN3UzvDbBBJhk", "cx": "c737077126efc4b44"}
+    {"key": "AIzaSyA2jTA_ju3HzDWFVUNXsUwN3UzvDbBBJhk", "cx": "c737077126efc4b44"},
+    {"key": "AIzaSyAISr7pZjnQCeI32fPSBouV7M4Kr-IAEhc", "cx": "c737077126efc4b44"},
+    {"key": "AIzaSyAX9zWw-dYB6ECIFk8ZLbQ5cpUbBjRBVnE", "cx": "c737077126efc4b44"},
+    {"key": "AIzaSyBSEjHL6Vub2h46AnbLnfhD_WwaerrGtkI", "cx": "c737077126efc4b44"},
+    {"key": "AIzaSyDqazTp1lPu19jIZ2nwSfyJ0keuftJQ3kk", "cx": "c737077126efc4b44"}
 ]
 
-# 🧠 GEMINI AI KEYS
 GEMINI_KEYS = [
     "AIzaSyCuigOxhFIWxcLw_iRFHcw64QYeqScINdM",
     "AIzaSyCxGQWZ2zl69EZWGWm747uXRUywd89rAAM",
@@ -28,22 +30,30 @@ GEMINI_KEYS = [
     "AIzaSyCRripIRlZJOj355lysWlrqMSn7q2Lq2WY"
 ]
 
-# ⚡ GROQ AI KEYS
 GROQ_KEYS = [
-    "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",
-    "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",
-    "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",
-    "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",
-    "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"
+    "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",
+    "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",
+    "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",
+    "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",
+    "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",
+    "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"
 ]
 
-# ⚙️ SETTINGS
 SHEET_NAME = "Jobs"
 TELEGRAM_TOKEN = "8399820379:AAFoPDaN32FBXPFahoCZPhRW0z6ndf8y1BA"
 CHAT_ID = "1808002973"
-USER_PROFILE = "Fresher/Intern Cyber Security, VAPT, SOC Analyst. Python, Linux, Burp Suite."
 
-# 🕵️ JOB QUERIES
+# 💎 UPDATED USER PROFILE FROM RESUME
+USER_PROFILE = """
+Candidate: G Venkata Shashank
+Role: Fresher/Intern in Cyber Security, VAPT, penetration tester
+Education: B.Tech CSE 
+Experience: Cyber Security Intern (Vulnerability assessments, OWASP Top 10, Burp Suite, Metasploitable)
+Skills: C, Java, Burp Suite, Nmap, Metasploit, Wireshark, Aircrack-ng, Wazuh, Kali Linux, ParrotOS, IoT Security
+Projects: ESP32 Wireless Pentest Lab, CVE-Details Telegram Bot, Cyber News Aggregator
+Certifications: CEH v13 (in progress), CEP , ISCC
+"""
+
 QUERIES = [
     'site:instahyre.com ("Cyber Security" OR "Security Analyst" OR "VAPT") (Bangalore OR Remote)',
     'site:cutshort.io ("Cyber Security" OR "Security Analyst") India',
@@ -110,11 +120,25 @@ async def search_google(session, query, start_page):
 # 4. AI FILTERING LOGIC
 # ==========================================
 
+AI_PROMPT = f"""
+User Resume:
+{USER_PROFILE}
+
+Task: Filter these jobs based on the resume. 
+Return ONLY JSON format strictly like this: {{"matches": [{{"index": 0, "match_percent": 85, "suitability": 90}}]}}
+Rules: 
+1. REJECT Senior/Manager/Sales roles. 
+2. ACCEPT Analyst/Intern/Fresher roles. 
+3. 'match_percent' = How well the job skills align with the resume (0-100). 
+4. 'suitability' = The chance they will hire a fresher/intern like this user (0-100).
+
+Jobs:
+"""
+
 async def check_jobs_gemini(session, jobs_text):
     key = get_gemini_key()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
-    prompt = f"User: {USER_PROFILE}\nFilter these. Return JSON indices {{'matches': [0, 2]}}. Rules: No Senior/Sales. Yes Analyst/Intern.\nJobs:\n{jobs_text}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    payload = {"contents": [{"parts": [{"text": AI_PROMPT + jobs_text}]}]}
     try:
         async with session.post(url, json=payload) as resp:
             if resp.status == 200:
@@ -122,17 +146,15 @@ async def check_jobs_gemini(session, jobs_text):
                 text = data['candidates'][0]['content']['parts'][0]['text']
                 return safe_parse_json(text).get("matches", [])
             else:
-                print(f"⚠️ Gemini Error {resp.status}: {await resp.text()}", flush=True)
-    except Exception as e: 
-        print(f"⚠️ Gemini Exception: {e}", flush=True)
+                print(f"⚠️ Gemini Error {resp.status}", flush=True)
+    except Exception as e: pass
     return None
 
 async def check_jobs_groq(session, jobs_text):
     key = get_groq_key()
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {key}"}
-    prompt = f"User: {USER_PROFILE}\nReturn ONLY JSON indices {{'matches': [0, 2]}} for relevant jobs.\nJobs:\n{jobs_text}"
-    payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": prompt}], "response_format": {"type": "json_object"}}
+    payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": AI_PROMPT + jobs_text}], "response_format": {"type": "json_object"}}
     try:
         async with session.post(url, json=payload, headers=headers) as resp:
             if resp.status == 200:
@@ -140,8 +162,7 @@ async def check_jobs_groq(session, jobs_text):
                 return json.loads(data['choices'][0]['message']['content']).get("matches", [])
             else:
                 print(f"⚠️ Groq Error {resp.status}", flush=True)
-    except Exception as e:
-        print(f"⚠️ Groq Exception: {e}", flush=True)
+    except Exception as e: pass
     return []
 
 # ==========================================
@@ -198,19 +219,24 @@ async def main():
             
             if matches:
                 for m in matches:
-                    if isinstance(m, int) and m < len(chunk):
-                        job = chunk[m]
-                        print(f"⭐ MATCH FOUND: {job['title']}", flush=True)
-                        row = ["New", "AI Match", job['title'], "Unknown", job['clean_link'], str(datetime.now())]
+                    idx = m.get("index")
+                    match_pct = m.get("match_percent", "N/A")
+                    suitability = m.get("suitability", "N/A")
+                    
+                    if isinstance(idx, int) and idx < len(chunk):
+                        job = chunk[idx]
+                        print(f"⭐ MATCH FOUND: {job['title']} (Match: {match_pct}%, Suitability: {suitability}%)", flush=True)
+                        row = ["New", f"Match: {match_pct}% | Suit: {suitability}%", job['title'], "Unknown", job['clean_link'], str(datetime.now())]
                         new_rows.append(row)
                         
                         kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
+                        msg_text = f"🤖 <b>JOB ALERT</b>\n\n💼 <b>{job['title']}</b>\n🎯 Profile Match: {match_pct}%\n📈 Fresher Suitability: {suitability}%\n\n🔗 {job['clean_link']}"
+                        
                         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                        payload = {"chat_id": CHAT_ID, "text": f"🤖 <b>JOB ALERT</b>\n{job['title']}\n{job['clean_link']}", "parse_mode": "HTML", "reply_markup": kb}
+                        payload = {"chat_id": CHAT_ID, "text": msg_text, "parse_mode": "HTML", "reply_markup": kb}
                         await session.post(url, json=payload)
                         next_row += 1
                         
-            # 🛑 3-Second Safety Pause to prevent API Crashes
             await asyncio.sleep(3)
 
     if new_rows: 
