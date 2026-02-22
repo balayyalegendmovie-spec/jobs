@@ -22,7 +22,6 @@ SEARCH_POOLS = [
 GEMINI_KEYS = [os.getenv(f"GAPI{i}") for i in range(1, 7) if os.getenv(f"GAPI{i}")]
 GROQ_KEYS = [os.getenv(f"GRAPI{i}") for i in range(1, 7) if os.getenv(f"GRAPI{i}")]
 
-SHEET_NAME = os.getenv("SHEET_NAME", "Jobs")
 TELEGRAM_TOKEN = os.getenv("TOK")
 CHAT_ID = os.getenv("ID")
 USER_PROFILE = os.getenv("USER_PROFILE_INFO")
@@ -86,7 +85,6 @@ async def search_ddg(query):
             print(f"⚠️ DDG Error: {e}", flush=True)
             return []
     
-    # This runs the synchronous search in a background thread so it acts like async!
     return await asyncio.to_thread(sync_search)
 
 async def search_google(session, query, start_page):
@@ -174,8 +172,11 @@ async def main():
     print("🚀 Bot started!", flush=True)
     creds = Credentials.from_service_account_info(json.loads(os.environ['GOOGLE_SHEET_CREDS']), scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     client = gspread.authorize(creds)
-    try: sheet = client.open(SHEET_NAME).sheet1 
-    except Exception as e: return print(f"❌ Error Opening Sheet: {e}", flush=True)
+    
+    try: 
+        sheet = client.open("Job_Search_Master").sheet1 
+    except Exception as e: 
+        return print(f"❌ Error Opening Sheet: {e}", flush=True)
 
     existing_links = set(sheet.col_values(5)[1:]) 
     next_row = len(sheet.col_values(1)) + 1 
