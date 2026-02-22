@@ -9,7 +9,7 @@ import feedparser
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
-from duckduckgo_search import AsyncDDGS
+from duckduckgo_search import DDGS
 
 # ==========================================
 # 1. CONFIGURATION (THE HYDRA 🐉)
@@ -75,15 +75,19 @@ async def fetch_full_text(session, url, fallback_snippet):
     return fallback_snippet
 
 async def search_ddg(query):
-    try:
-        results = []
-        async with AsyncDDGS() as ddgs:
-            async for r in ddgs.text(query, max_results=15):
-                results.append({"title": r.get("title", ""), "link": r.get("href", ""), "snippet": r.get("body", "")})
-        return results
-    except Exception as e:
-        print(f"⚠️ DDG Error: {e}", flush=True)
-        return []
+    def sync_search():
+        try:
+            results = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=15):
+                    results.append({"title": r.get("title", ""), "link": r.get("href", ""), "snippet": r.get("body", "")})
+            return results
+        except Exception as e:
+            print(f"⚠️ DDG Error: {e}", flush=True)
+            return []
+    
+    # This runs the synchronous search in a background thread so it acts like async!
+    return await asyncio.to_thread(sync_search)
 
 async def search_google(session, query, start_page):
     cred = get_search_cred()
