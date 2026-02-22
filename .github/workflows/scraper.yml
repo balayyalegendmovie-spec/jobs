@@ -43,4 +43,5 @@ jobs:
           TOK: ${{ secrets.TOK }}
           ID: ${{ secrets.ID }}
           USER_PROFILE_INFO: ${{ secrets.USER_PROFILE_INFO }}
+          SHEET_NAME: ${{ secrets.SHEET_NAME }}
         run: python main.py
