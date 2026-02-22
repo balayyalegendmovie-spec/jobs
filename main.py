@@ -8,6 +8,8 @@ import re
 import feedparser
 from datetime import datetime
 from google.oauth2.service_account import Credentials
+from bs4 import BeautifulSoup
+from duckduckgo_search import AsyncDDGS
 
 # ==========================================
 # 1. CONFIGURATION (THE HYDRA 🐉)
@@ -17,29 +19,10 @@ SEARCH_POOLS = [
     {"key": os.getenv("SAPI"), "cx": os.getenv("CXAPI")}
 ]
 
-# 🧠 GEMINI AI KEYS
-GEMINI_KEYS = [
-    os.getenv("GAPI1"),
-    os.getenv("GAPI2"),
-    os.getenv("GAPI3"),
-    os.getenv("GAPI4"),
-    os.getenv("GAPI5"),
-    os.getenv("GAPI6")
-]
-GEMINI_KEYS = [k for k in GEMINI_KEYS if k] 
+GEMINI_KEYS = [os.getenv(f"GAPI{i}") for i in range(1, 7) if os.getenv(f"GAPI{i}")]
+GROQ_KEYS = [os.getenv(f"GRAPI{i}") for i in range(1, 7) if os.getenv(f"GRAPI{i}")]
 
-# ⚡ GROQ AI KEYS
-GROQ_KEYS = [
-    os.getenv("GRAPI1"),
-    os.getenv("GRAPI2"),
-    os.getenv("GRAPI3"),
-    os.getenv("GRAPI4"),
-    os.getenv("GRAPI5"),
-    os.getenv("GRAPI6")
-]
-GROQ_KEYS = [k for k in GROQ_KEYS if k]
-
-SHEET_NAME = os.getenv("SHEET_NAME")
+SHEET_NAME = os.getenv("SHEET_NAME", "Jobs")
 TELEGRAM_TOKEN = os.getenv("TOK")
 CHAT_ID = os.getenv("ID")
 USER_PROFILE = os.getenv("USER_PROFILE_INFO")
@@ -61,9 +44,9 @@ QUERIES = [
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
-def get_search_cred(): return random.choice(SEARCH_POOLS)
-def get_gemini_key(): return random.choice(GEMINI_KEYS)
-def get_groq_key(): return random.choice(GROQ_KEYS)
+def get_search_cred(): return random.choice(SEARCH_POOLS) if SEARCH_POOLS and SEARCH_POOLS[0]['key'] else None
+def get_gemini_key(): return random.choice(GEMINI_KEYS) if GEMINI_KEYS else None
+def get_groq_key(): return random.choice(GROQ_KEYS) if GROQ_KEYS else None
 
 def safe_parse_json(text):
     try: return json.loads(text)
@@ -75,8 +58,44 @@ def safe_parse_json(text):
     return {}
 
 # ==========================================
-# 3. JOB FETCHING LOGIC
+# 3. SCRAPING & SEARCH LOGIC
 # ==========================================
+
+async def fetch_full_text(session, url, fallback_snippet):
+    try:
+        async with session.get(url, timeout=7) as resp:
+            if resp.status == 200:
+                html = await resp.text()
+                soup = BeautifulSoup(html, 'html.parser')
+                for script in soup(["script", "style", "nav", "footer"]):
+                    script.extract()
+                text = soup.get_text(separator=' ', strip=True)
+                return text[:4000] if len(text) > 100 else fallback_snippet
+    except: pass
+    return fallback_snippet
+
+async def search_ddg(query):
+    try:
+        results = []
+        async with AsyncDDGS() as ddgs:
+            async for r in ddgs.text(query, max_results=15):
+                results.append({"title": r.get("title", ""), "link": r.get("href", ""), "snippet": r.get("body", "")})
+        return results
+    except Exception as e:
+        print(f"⚠️ DDG Error: {e}", flush=True)
+        return []
+
+async def search_google(session, query, start_page):
+    cred = get_search_cred()
+    if not cred: return []
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {"key": cred['key'], "cx": cred['cx'], "q": query, "start": start_page}
+    try:
+        async with session.get(url, params=params) as resp:
+            if resp.status == 200:
+                return (await resp.json()).get("items", [])
+    except: pass
+    return []
 
 async def fetch_jobicy_rss():
     print("📡 Scanning Jobicy (Remote)...", flush=True)
@@ -85,29 +104,12 @@ async def fetch_jobicy_rss():
         jobs = []
         for entry in feed.entries:
             if any(x in entry.title.lower() for x in ["senior", "head", "lead"]): continue
-            jobs.append({"title": entry.title, "link": entry.link, "snippet": entry.summary[:200], "source": "Jobicy"})
+            jobs.append({"title": entry.title, "link": entry.link, "snippet": entry.summary[:200]})
         return jobs
-    except Exception as e:
-        print(f"⚠️ Jobicy Error: {e}", flush=True)
-        return []
-
-async def search_google(session, query, start_page):
-    cred = get_search_cred()
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {"key": cred['key'], "cx": cred['cx'], "q": query, "start": start_page}
-    try:
-        async with session.get(url, params=params) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("items", [])
-            else:
-                print(f"⚠️ Google Search Error {resp.status}: {await resp.text()}", flush=True)
-    except Exception as e: 
-        print(f"⚠️ Connection Error: {e}", flush=True)
-    return []
+    except: return []
 
 # ==========================================
-# 4. AI FILTERING LOGIC
+# 4. AI FILTERING & GENERATION
 # ==========================================
 
 AI_PROMPT = f"""
@@ -125,37 +127,40 @@ Rules:
 Jobs:
 """
 
-async def check_jobs_gemini(session, jobs_text):
-    if not GEMINI_KEYS: return None
+def get_cv_prompt(job_text):
+    return f"User Resume:\n{USER_PROFILE}\n\nTask: Write a highly professional, confident 3-paragraph cold email/cover letter applying for this job. Use the user's specific projects and skills. Do NOT include placeholders. Output ONLY the email text.\n\nJob Details:\n{job_text}"
+
+async def call_gemini(session, text, task="filter"):
     key = get_gemini_key()
+    if not key: return None if task == "filter" else ""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
-    payload = {"contents": [{"parts": [{"text": AI_PROMPT + jobs_text}]}]}
+    payload = {"contents": [{"parts": [{"text": (AI_PROMPT + text) if task == "filter" else get_cv_prompt(text)}]}]}
     try:
         async with session.post(url, json=payload) as resp:
             if resp.status == 200:
-                data = await resp.json()
-                text = data['candidates'][0]['content']['parts'][0]['text']
-                return safe_parse_json(text).get("matches", [])
-            else:
-                print(f"⚠️ Gemini Error {resp.status}", flush=True)
-    except Exception as e: pass
-    return None
+                res_text = (await resp.json())['candidates'][0]['content']['parts'][0]['text']
+                return safe_parse_json(res_text).get("matches", []) if task == "filter" else res_text.strip()
+    except: pass
+    return None if task == "filter" else ""
 
-async def check_jobs_groq(session, jobs_text):
-    if not GROQ_KEYS: return []
+async def call_groq(session, text, task="filter"):
     key = get_groq_key()
+    if not key: return [] if task == "filter" else ""
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {key}"}
-    payload = {"model": "llama3-8b-8192", "messages": [{"role": "user", "content": AI_PROMPT + jobs_text}], "response_format": {"type": "json_object"}}
+    payload = {
+        "model": "llama3-8b-8192", 
+        "messages": [{"role": "user", "content": (AI_PROMPT + text) if task == "filter" else get_cv_prompt(text)}]
+    }
+    if task == "filter": payload["response_format"] = {"type": "json_object"}
+    
     try:
         async with session.post(url, json=payload, headers=headers) as resp:
             if resp.status == 200:
-                data = await resp.json()
-                return json.loads(data['choices'][0]['message']['content']).get("matches", [])
-            else:
-                print(f"⚠️ Groq Error {resp.status}", flush=True)
-    except Exception as e: pass
-    return []
+                res_text = (await resp.json())['choices'][0]['message']['content']
+                return json.loads(res_text).get("matches", []) if task == "filter" else res_text.strip()
+    except: pass
+    return [] if task == "filter" else ""
 
 # ==========================================
 # 5. MAIN EXECUTION
@@ -163,89 +168,74 @@ async def check_jobs_groq(session, jobs_text):
 
 async def main():
     print("🚀 Bot started!", flush=True)
-    creds = Credentials.from_service_account_info(
-        json.loads(os.environ['GOOGLE_SHEET_CREDS']),
-        scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    )
+    creds = Credentials.from_service_account_info(json.loads(os.environ['GOOGLE_SHEET_CREDS']), scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"])
     client = gspread.authorize(creds)
-    
-    try:
-        sheet = client.open("Job_Search_Master").sheet1 
-    except Exception as e:
-        print(f"❌ Error Opening Sheet: {e}", flush=True)
-        return
+    try: sheet = client.open(SHEET_NAME).sheet1 
+    except Exception as e: return print(f"❌ Error Opening Sheet: {e}", flush=True)
 
     existing_links = set(sheet.col_values(5)[1:]) 
     next_row = len(sheet.col_values(1)) + 1 
+    jobs_buffer, new_rows = [], []
     
-    jobs_buffer = []
-    new_rows = []
-    
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     async with aiohttp.ClientSession(headers=headers) as session:
-        print("🔍 Searching Google & Jobicy...", flush=True)
-        tasks = [search_google(session, q, p) for q in QUERIES for p in [1, 11]]
+        print("🔍 Searching Google, DDG & Jobicy...", flush=True)
+        tasks = [search_google(session, q, p) for q in QUERIES for p in [1, 11]] + [search_ddg(q) for q in QUERIES]
         results = await asyncio.gather(*tasks)
-        
-        try: results[0].extend(await fetch_jobicy_rss())
+        try: results.append(await fetch_jobicy_rss())
         except: pass
 
         for batch in results:
             for item in batch:
+                if not item: continue
                 link = item.get('link', '').split('?')[0]
-                if link in existing_links: continue
-                if any(x in item.get('title', '').lower() for x in ["senior", "manager"]): continue
+                if link in existing_links or any(x in item.get('title', '').lower() for x in ["senior", "manager"]): continue
                 item['clean_link'] = link
                 jobs_buffer.append(item)
                 existing_links.add(link)
         
-        print(f"✅ Gathered {len(jobs_buffer)} total candidates. Starting AI Filter...", flush=True)
-        
-        for i in range(0, len(jobs_buffer), 8):
-            chunk = jobs_buffer[i:i+8]
-            print(f"🧠 Asking AI to analyze batch {i//8 + 1}...", flush=True)
-            txt = "\n".join([f"[{idx}] {j['title']} | {j.get('snippet','')}" for idx, j in enumerate(chunk)])
+        print(f"✅ Gathered {len(jobs_buffer)} new links. Running Deep Scrape...", flush=True)
+        scrape_tasks = [fetch_full_text(session, j['clean_link'], j.get('snippet', '')) for j in jobs_buffer]
+        full_texts = await asyncio.gather(*scrape_tasks)
+        for i, text in enumerate(full_texts): jobs_buffer[i]['full_text'] = text
+
+        for i in range(0, len(jobs_buffer), 5):
+            chunk = jobs_buffer[i:i+5]
+            print(f"🧠 AI analyzing batch {i//5 + 1}...", flush=True)
+            txt = "\n".join([f"[{idx}] {j['title']} | {j['full_text'][:500]}" for idx, j in enumerate(chunk)])
             
-            matches = await check_jobs_gemini(session, txt)
-            if matches is None: matches = await check_jobs_groq(session, txt)
+            matches = await call_gemini(session, txt)
+            if matches is None: matches = await call_groq(session, txt)
             
             if matches:
                 for m in matches:
                     idx = m.get("index")
-                    match_pct = m.get("match_percent", "N/A")
-                    suitability = m.get("suitability", "N/A")
+                    m_pct = m.get("match_percent", 0)
+                    s_pct = m.get("suitability", 0)
                     
                     if isinstance(idx, int) and idx < len(chunk):
                         job = chunk[idx]
-                        print(f"⭐ MATCH FOUND: {job['title']} (Match: {match_pct}%, Suitability: {suitability}%)", flush=True)
+                        print(f"⭐ MATCH: {job['title']} (Match: {m_pct}%, Suit: {s_pct}%)", flush=True)
                         
-                        row = [
-                            "New",                  # Col 1 (A)
-                            "AI Match",             # Col 2 (B)
-                            job['title'],           # Col 3 (C)
-                            "Unknown",              # Col 4 (D)
-                            job['clean_link'],      # Col 5 (E)
-                            str(datetime.now()),    # Col 6 (F)
-                            f"{match_pct}%",        # Col 7 (G)
-                            f"{suitability}%"       # Col 8 (H)
-                        ]
+                        cv_text = "N/A"
+                        if isinstance(m_pct, (int, float)) and isinstance(s_pct, (int, float)) and m_pct >= 85 and s_pct >= 85:
+                            print(f"✍️ Drafting Cover Letter for {job['title']}...", flush=True)
+                            cv_text = await call_gemini(session, job['full_text'], task="cv")
+                            if not cv_text: cv_text = await call_groq(session, job['full_text'], task="cv")
+
+                        row = ["New", "AI Match", job['title'], "Unknown", job['clean_link'], str(datetime.now()), f"{m_pct}%", f"{s_pct}%", cv_text]
                         new_rows.append(row)
                         
                         kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
-                        msg_text = f"🤖 <b>JOB ALERT</b>\n\n💼 <b>{job['title']}</b>\n🎯 Profile Match: {match_pct}%\n📈 Fresher Suitability: {suitability}%\n\n🔗 {job['clean_link']}"
-                        
-                        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                        payload = {"chat_id": CHAT_ID, "text": msg_text, "parse_mode": "HTML", "reply_markup": kb}
-                        await session.post(url, json=payload)
+                        msg_text = f"🤖 <b>JOB ALERT</b>\n\n💼 <b>{job['title']}</b>\n🎯 Match: {m_pct}%\n📈 Suitability: {s_pct}%\n📝 Cover Letter Auto-Drafted: {'Yes ✅' if cv_text != 'N/A' else 'No ❌'}\n\n🔗 {job['clean_link']}"
+                        await session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg_text, "parse_mode": "HTML", "reply_markup": kb})
                         next_row += 1
-                        
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
 
     if new_rows: 
         sheet.append_rows(new_rows)
         print(f"💾 Saved {len(new_rows)} jobs to Google Sheet.", flush=True)
-    else:
-        print("😴 No relevant jobs found this cycle.", flush=True)
+    else: print("😴 No relevant jobs found this cycle.", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
