@@ -14,45 +14,35 @@ from google.oauth2.service_account import Credentials
 # ==========================================
 
 SEARCH_POOLS = [
-    {"key": "AIzaSyA2jTA_ju3HzDWFVUNXsUwN3UzvDbBBJhk", "cx": "c737077126efc4b44"},
-    {"key": "AIzaSyAISr7pZjnQCeI32fPSBouV7M4Kr-IAEhc", "cx": "c737077126efc4b44"},
-    {"key": "AIzaSyAX9zWw-dYB6ECIFk8ZLbQ5cpUbBjRBVnE", "cx": "c737077126efc4b44"},
-    {"key": "AIzaSyBSEjHL6Vub2h46AnbLnfhD_WwaerrGtkI", "cx": "c737077126efc4b44"},
-    {"key": "AIzaSyDqazTp1lPu19jIZ2nwSfyJ0keuftJQ3kk", "cx": "c737077126efc4b44"}
+    {"key": os.getenv("SAPI"), "cx": os.getenv("CXAPI")}
 ]
 
+# 🧠 GEMINI AI KEYS
 GEMINI_KEYS = [
-    "AIzaSyCuigOxhFIWxcLw_iRFHcw64QYeqScINdM",
-    "AIzaSyCxGQWZ2zl69EZWGWm747uXRUywd89rAAM",
-    "AIzaSyAiSEI8k49cxAGKpixe2BTWRqU7cMjdWQg",
-    "AIzaSyBOT61RyPOTBBiDw6XmLh27vAzj6XQhVkM",
-    "AIzaSyC48NuYYc2wgupNmXvsgnytZq94ES6BRbk",
-    "AIzaSyCRripIRlZJOj355lysWlrqMSn7q2Lq2WY"
+    os.getenv("GAPI1"),
+    os.getenv("GAPI2"),
+    os.getenv("GAPI3"),
+    os.getenv("GAPI4"),
+    os.getenv("GAPI5"),
+    os.getenv("GAPI6")
 ]
+GEMINI_KEYS = [k for k in GEMINI_KEYS if k] 
 
+# ⚡ GROQ AI KEYS
 GROQ_KEYS = [
-    "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",
-    "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",
-    "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",
-    "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",
-    "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",
-    "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"
+    os.getenv("GRAPI1"),
+    os.getenv("GRAPI2"),
+    os.getenv("GRAPI3"),
+    os.getenv("GRAPI4"),
+    os.getenv("GRAPI5"),
+    os.getenv("GRAPI6")
 ]
+GROQ_KEYS = [k for k in GROQ_KEYS if k]
 
 SHEET_NAME = "Jobs"
-TELEGRAM_TOKEN = "8399820379:AAFoPDaN32FBXPFahoCZPhRW0z6ndf8y1BA"
-CHAT_ID = "1808002973"
-
-# 💎 UPDATED USER PROFILE FROM RESUME
-USER_PROFILE = """
-Candidate: G Venkata Shashank
-Role: Fresher/Intern in Cyber Security, VAPT, penetration tester
-Education: B.Tech CSE 
-Experience: Cyber Security Intern (Vulnerability assessments, OWASP Top 10, Burp Suite, Metasploitable)
-Skills: C, Java, Burp Suite, Nmap, Metasploit, Wireshark, Aircrack-ng, Wazuh, Kali Linux, ParrotOS, IoT Security
-Projects: ESP32 Wireless Pentest Lab, CVE-Details Telegram Bot, Cyber News Aggregator
-Certifications: CEH v13 (in progress), CEP , ISCC
-"""
+TELEGRAM_TOKEN = os.getenv("TOK")
+CHAT_ID = os.getenv("ID")
+USER_PROFILE = os.getenv("USER_PROFILE_INFO")
 
 QUERIES = [
     'site:instahyre.com ("Cyber Security" OR "Security Analyst" OR "VAPT") (Bangalore OR Remote)',
@@ -136,6 +126,7 @@ Jobs:
 """
 
 async def check_jobs_gemini(session, jobs_text):
+    if not GEMINI_KEYS: return None
     key = get_gemini_key()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
     payload = {"contents": [{"parts": [{"text": AI_PROMPT + jobs_text}]}]}
@@ -151,6 +142,7 @@ async def check_jobs_gemini(session, jobs_text):
     return None
 
 async def check_jobs_groq(session, jobs_text):
+    if not GROQ_KEYS: return []
     key = get_groq_key()
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {key}"}
@@ -183,7 +175,6 @@ async def main():
         print(f"❌ Error Opening Sheet: {e}", flush=True)
         return
 
-    # ⚠️ Kept exactly as column 5 (E) to match your existing sheet
     existing_links = set(sheet.col_values(5)[1:]) 
     next_row = len(sheet.col_values(1)) + 1 
     
@@ -228,7 +219,6 @@ async def main():
                         job = chunk[idx]
                         print(f"⭐ MATCH FOUND: {job['title']} (Match: {match_pct}%, Suitability: {suitability}%)", flush=True)
                         
-                        # ⚠️ Appending exactly 8 columns (Status, Verdict, Role, Company, Link, Date, Match%, Suitability%)
                         row = [
                             "New",                  # Col 1 (A)
                             "AI Match",             # Col 2 (B)
