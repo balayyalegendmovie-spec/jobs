@@ -39,7 +39,7 @@ GROQ_KEYS = [
 ]
 GROQ_KEYS = [k for k in GROQ_KEYS if k]
 
-SHEET_NAME = "Jobs"
+SHEET_NAME = os.getenv("SHEET_NAME")
 TELEGRAM_TOKEN = os.getenv("TOK")
 CHAT_ID = os.getenv("ID")
 USER_PROFILE = os.getenv("USER_PROFILE_INFO")
