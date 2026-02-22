@@ -9,7 +9,7 @@ import feedparser
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # ==========================================
 # 1. CONFIGURATION (THE HYDRA 🐉)
@@ -22,6 +22,7 @@ SEARCH_POOLS = [
 GEMINI_KEYS = [os.getenv(f"GAPI{i}") for i in range(1, 7) if os.getenv(f"GAPI{i}")]
 GROQ_KEYS = [os.getenv(f"GRAPI{i}") for i in range(1, 7) if os.getenv(f"GRAPI{i}")]
 
+SHEET_NAME = os.getenv("SHEET_NAME", "Jobs")
 TELEGRAM_TOKEN = os.getenv("TOK")
 CHAT_ID = os.getenv("ID")
 USER_PROFILE = os.getenv("USER_PROFILE_INFO")
@@ -78,7 +79,8 @@ async def search_ddg(query):
         try:
             results = []
             with DDGS() as ddgs:
-                for r in ddgs.text(query, max_results=15):
+                # timelimit="m" restricts results to the past month (stops old jobs)
+                for r in ddgs.text(query, max_results=15, timelimit="m"):
                     results.append({"title": r.get("title", ""), "link": r.get("href", ""), "snippet": r.get("body", "")})
             return results
         except Exception as e:
@@ -91,7 +93,8 @@ async def search_google(session, query, start_page):
     cred = get_search_cred()
     if not cred: return []
     url = "https://www.googleapis.com/customsearch/v1"
-    params = {"key": cred['key'], "cx": cred['cx'], "q": query, "start": start_page}
+    # dateRestrict="m1" restricts Google results to the past 1 month!
+    params = {"key": cred['key'], "cx": cred['cx'], "q": query, "start": start_page, "dateRestrict": "m1"}
     try:
         async with session.get(url, params=params) as resp:
             if resp.status == 200:
@@ -121,10 +124,12 @@ User Resume:
 Task: Filter these jobs based on the resume. 
 Return ONLY JSON format strictly like this: {{"matches": [{{"index": 0, "match_percent": 85, "suitability": 90}}]}}
 Rules: 
-1. REJECT Senior/Manager/Sales roles. 
-2. ACCEPT Analyst/Intern/Fresher roles. 
-3. 'match_percent' = How well the job skills align with the resume (0-100). 
-4. 'suitability' = The chance they will hire a fresher/intern like this user (0-100).
+1. STRICT REJECT: Search result pages or lists showing multiple jobs (e.g. "127 jobs found", "Top 10 openings"). It MUST be a single, specific job posting.
+2. STRICT REJECT: Non-cyber roles. Reject general software engineering, backend developer, content writer, or sales roles.
+3. STRICT REJECT: Senior/Manager/Head roles. 
+4. ACCEPT ONLY: Analyst, Intern, or Fresher roles strictly in Cyber Security, VAPT, SOC, or InfoSec.
+5. 'match_percent' = How well the job skills align with the resume (0-100). 
+6. 'suitability' = The chance they will hire a fresher/intern like this user (0-100).
 
 Jobs:
 """
@@ -231,9 +236,17 @@ async def main():
                         row = ["New", "AI Match", job['title'], "Unknown", job['clean_link'], str(datetime.now()), f"{m_pct}%", f"{s_pct}%", cv_text]
                         new_rows.append(row)
                         
+                        # Main Job Alert Message
+                        msg_text = f"🤖 <b>JOB ALERT</b>\n\n💼 <b>{job['title']}</b>\n🎯 Match: {m_pct}%\n📈 Suitability: {s_pct}%\n\n🔗 {job['clean_link']}"
                         kb = {"inline_keyboard": [[{"text": "✅ Apply", "callback_data": f"apply_{next_row}"}, {"text": "❌ Trash", "callback_data": f"trash_{next_row}"}]]}
-                        msg_text = f"🤖 <b>JOB ALERT</b>\n\n💼 <b>{job['title']}</b>\n🎯 Match: {m_pct}%\n📈 Suitability: {s_pct}%\n📝 Cover Letter Auto-Drafted: {'Yes ✅' if cv_text != 'N/A' else 'No ❌'}\n\n🔗 {job['clean_link']}"
                         await session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": msg_text, "parse_mode": "HTML", "reply_markup": kb})
+                        
+                        # Send Cover Letter as a Follow-up Message if generated
+                        if cv_text != "N/A":
+                            safe_cv = cv_text.replace('<', '').replace('>', '') # Prevent HTML tag errors
+                            cv_msg = f"📝 <b>Auto-Drafted Cover Letter:</b>\n\n{safe_cv}"
+                            await session.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": cv_msg, "parse_mode": "HTML"})
+                            
                         next_row += 1
             await asyncio.sleep(4)
 
