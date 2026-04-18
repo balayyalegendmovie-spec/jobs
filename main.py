@@ -12,196 +12,202 @@ from bs4 import BeautifulSoup
 from ddgs import DDGS
 
 # ==========================================
-# 1. CONFIGURATION
+# GLOBAL CONFIG
 # ==========================================
 
-MAX_JOBS_PER_RUN = 40
-SCRAPE_CONCURRENCY = 10
+MAX_JOBS_PER_RUN = 30
+SCRAPE_CONCURRENCY = 5
 GLOBAL_TIMEOUT = 900  # 15 minutes
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
-SEARCH_POOLS = [
-    {"key": os.getenv("SAPI"), "cx": os.getenv("CXAPI")}
-]
-
-GEMINI_KEYS = [os.getenv(f"GAPI{i}") for i in range(1, 7) if os.getenv(f"GAPI{i}")]
-GROQ_KEYS = [os.getenv(f"GRAPI{i}") for i in range(1, 7) if os.getenv(f"GRAPI{i}")]
-
-SHEET_NAME = os.getenv("SHEET_NAME", "Jobs")
-TELEGRAM_TOKEN = os.getenv("TOK")
-CHAT_ID = os.getenv("ID")
-USER_PROFILE = os.getenv("USER_PROFILE_INFO", "")
+SHEET_NAME = os.getenv("SHEET_NAME", "Job_Search_Master")
 
 QUERIES = [
-    'site:instahyre.com ("Cyber Security" OR "Security Analyst") Bangalore',
-    'site:cutshort.io ("Cyber Security" OR "Security Analyst") India',
-    'site:hirist.tech ("Cyber Security") India',
-    'site:naukri.com ("Cyber Security") Bangalore not:senior',
-    'site:foundit.in ("Cyber Security") Bangalore',
-    'site:wellfound.com/jobs ("Cyber Security") India',
-    'site:weworkremotely.com ("Security") not:senior'
+    'site:instahyre.com "Cyber Security" Bangalore',
+    'site:cutshort.io "Cyber Security" India',
+    'site:hirist.tech "Cyber Security" India',
+    'site:naukri.com "Cyber Security" Bangalore not:senior',
+    'site:wellfound.com/jobs "Cyber Security" India'
 ]
 
 # ==========================================
-# 2. HELPERS
+# SAFE LOGGER
 # ==========================================
 
-def get_search_cred():
-    return random.choice(SEARCH_POOLS) if SEARCH_POOLS and SEARCH_POOLS[0]['key'] else None
+def log(msg):
+    print(msg, flush=True)
 
-def get_gemini_key():
-    return random.choice(GEMINI_KEYS) if GEMINI_KEYS else None
+# ==========================================
+# SAFE GOOGLE SHEETS CONNECTION
+# ==========================================
 
-def get_groq_key():
-    return random.choice(GROQ_KEYS) if GROQ_KEYS else None
+async def setup_google_sheet():
+    def connect():
+        creds_json = os.getenv("GOOGLE_SHEET_CREDS")
+        if not creds_json:
+            raise Exception("Missing GOOGLE_SHEET_CREDS")
 
-def safe_parse_json(text):
+        creds = Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+        )
+
+        client = gspread.authorize(creds)
+        return client.open(SHEET_NAME).sheet1
+
     try:
-        return json.loads(text)
-    except:
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except:
-                pass
-    return {}
+        return await asyncio.wait_for(asyncio.to_thread(connect), timeout=30)
+    except Exception as e:
+        log(f"❌ Google Sheets Error: {e}")
+        return None
 
 # ==========================================
-# 3. SEARCH FUNCTIONS
+# SAFE SEARCH
 # ==========================================
-
-async def search_ddg(query):
-    def sync_search():
-        try:
-            results = []
-            with DDGS() as ddgs:
-                for r in ddgs.text(query, max_results=10, timelimit="m"):
-                    results.append({
-                        "title": r.get("title", ""),
-                        "link": r.get("href", ""),
-                        "snippet": r.get("body", "")
-                    })
-            return results
-        except:
-            return []
-    return await asyncio.to_thread(sync_search)
 
 async def search_google(session, query):
-    cred = get_search_cred()
-    if not cred:
+    key = os.getenv("SAPI")
+    cx = os.getenv("CXAPI")
+
+    if not key or not cx:
         return []
 
     url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": cred['key'],
-        "cx": cred['cx'],
-        "q": query,
-        "dateRestrict": "m1"
-    }
+    params = {"key": key, "cx": cx, "q": query, "dateRestrict": "m1"}
 
     try:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.get(url, params=params, timeout=REQUEST_TIMEOUT) as resp:
             if resp.status == 200:
-                return (await resp.json()).get("items", [])
-    except:
-        pass
+                data = await resp.json()
+                return data.get("items", [])
+            else:
+                log(f"⚠️ Google API status {resp.status}")
+    except Exception as e:
+        log(f"⚠️ Google Search Error: {e}")
+
     return []
 
-async def fetch_jobicy_rss():
+async def search_ddg(query):
+    def run():
+        try:
+            results = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=5, timelimit="m"):
+                    results.append({
+                        "title": r.get("title"),
+                        "link": r.get("href"),
+                        "snippet": r.get("body", "")
+                    })
+            return results
+        except Exception as e:
+            log(f"⚠️ DDG Error: {e}")
+            return []
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(run), timeout=30)
+    except:
+        log("⚠️ DDG Timeout")
+        return []
+
+async def fetch_rss():
     try:
         feed = feedparser.parse(
             "https://jobicy.com/?feed=job_feed&job_categories=security-engineer&job_types=remote"
         )
-        jobs = []
-        for entry in feed.entries:
-            if any(x in entry.title.lower() for x in ["senior", "lead", "manager"]):
-                continue
-            jobs.append({
-                "title": entry.title,
-                "link": entry.link,
-                "snippet": entry.summary[:200]
-            })
-        return jobs
-    except:
+        return [{"title": e.title, "link": e.link, "snippet": e.summary[:200]}
+                for e in feed.entries]
+    except Exception as e:
+        log(f"⚠️ RSS Error: {e}")
         return []
 
 # ==========================================
-# 4. SCRAPING (LIMITED CONCURRENCY)
+# SAFE SCRAPER
 # ==========================================
 
-async def fetch_full_text(session, url, fallback, semaphore):
-    async with semaphore:
+async def scrape_page(session, url, fallback, sem):
+    async with sem:
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(url, timeout=REQUEST_TIMEOUT) as resp:
                 if resp.status == 200:
                     html = await resp.text()
                     soup = BeautifulSoup(html, "html.parser")
                     for tag in soup(["script", "style", "nav", "footer"]):
                         tag.extract()
                     text = soup.get_text(" ", strip=True)
-                    return text[:3000] if len(text) > 100 else fallback
-        except:
-            pass
-        return fallback
+                    return text[:3000]
+        except Exception:
+            return fallback
+    return fallback
 
 # ==========================================
-# 5. AI CALLS (SAFE TIMEOUT)
+# SAFE TELEGRAM
 # ==========================================
 
-async def call_gemini(session, prompt):
-    key = get_gemini_key()
-    if not key:
-        return []
+async def send_telegram(session, message):
+    token = os.getenv("TOK")
+    chat_id = os.getenv("ID")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    if not token or not chat_id:
+        return
 
     try:
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            if resp.status == 200:
-                text = (await resp.json())['candidates'][0]['content']['parts'][0]['text']
-                return safe_parse_json(text).get("matches", [])
-    except:
-        pass
-    return []
+        await session.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": message},
+            timeout=REQUEST_TIMEOUT
+        )
+    except Exception as e:
+        log(f"⚠️ Telegram Error: {e}")
 
 # ==========================================
-# 6. MAIN
+# MAIN
 # ==========================================
 
 async def main():
-    print("🚀 Bot Started")
 
-    creds = Credentials.from_service_account_info(
-        json.loads(os.environ['GOOGLE_SHEET_CREDS']),
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-    )
-    client = gspread.authorize(creds)
-    sheet = client.open("Job_Search_Master").sheet1
+    log("🚀 Bot Started")
 
-    existing_links = set(sheet.col_values(5)[1:])
-    new_rows = []
+    # --- Google Sheets ---
+    log("🔐 Connecting to Google Sheets...")
+    sheet = await setup_google_sheet()
+    if sheet:
+        log("✅ Google Sheets Connected")
+    else:
+        log("⚠️ Running without Google Sheets")
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+    existing_links = set()
+    if sheet:
+        try:
+            existing_links = set(sheet.col_values(3)[1:])
+        except Exception as e:
+            log(f"⚠️ Failed loading existing links: {e}")
+
     semaphore = asyncio.Semaphore(SCRAPE_CONCURRENCY)
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     async with aiohttp.ClientSession(headers=headers) as session:
 
-        print("🔍 Searching...")
-        tasks = [search_google(session, q) for q in QUERIES]
-        tasks += [search_ddg(q) for q in QUERIES]
-        tasks.append(fetch_jobicy_rss())
+        # --- SEARCH ---
+        log("🔍 Starting Searches")
 
-        results = await asyncio.gather(*tasks)
+        google_tasks = [search_google(session, q) for q in QUERIES]
+        ddg_tasks = [search_ddg(q) for q in QUERIES]
 
-        jobs_buffer = []
-        for batch in results:
+        google_results = await asyncio.gather(*google_tasks)
+        ddg_results = await asyncio.gather(*ddg_tasks)
+        rss_results = await fetch_rss()
+
+        all_results = google_results + ddg_results + [rss_results]
+
+        jobs = []
+
+        for batch in all_results:
             for item in batch:
-                link = item.get("link", "").split("?")[0]
-                title = item.get("title", "")
+                link = (item.get("link") or "").split("?")[0]
+                title = item.get("title") or ""
 
                 if not link or link in existing_links:
                     continue
@@ -209,49 +215,59 @@ async def main():
                 if any(x in title.lower() for x in ["senior", "manager", "lead"]):
                     continue
 
-                jobs_buffer.append({
+                jobs.append({
                     "title": title,
                     "link": link,
                     "snippet": item.get("snippet", "")
                 })
 
-                existing_links.add(link)
+        jobs = jobs[:MAX_JOBS_PER_RUN]
 
-        jobs_buffer = jobs_buffer[:MAX_JOBS_PER_RUN]
+        log(f"✅ {len(jobs)} jobs after filtering")
 
-        print(f"✅ Processing {len(jobs_buffer)} jobs")
+        # --- SCRAPE ---
+        log("🌐 Scraping pages...")
 
         scrape_tasks = [
-            fetch_full_text(session, j["link"], j["snippet"], semaphore)
-            for j in jobs_buffer
+            scrape_page(session, j["link"], j["snippet"], semaphore)
+            for j in jobs
         ]
 
         full_texts = await asyncio.gather(*scrape_tasks)
 
         for i, text in enumerate(full_texts):
-            jobs_buffer[i]["full_text"] = text
+            jobs[i]["full_text"] = text
+            log(f"✅ Scraped {i+1}/{len(full_texts)}")
 
-        for job in jobs_buffer:
-            row = [
-                "New",
-                job["title"],
-                job["link"],
-                str(datetime.now())
-            ]
-            new_rows.append(row)
+        # --- SAVE ---
+        if sheet and jobs:
+            try:
+                rows = [
+                    ["New", j["title"], j["link"], str(datetime.now())]
+                    for j in jobs
+                ]
+                await asyncio.to_thread(sheet.append_rows, rows)
+                log(f"💾 Saved {len(rows)} jobs to sheet")
+            except Exception as e:
+                log(f"⚠️ Sheet Write Error: {e}")
 
-        if new_rows:
-            sheet.append_rows(new_rows)
-            print(f"💾 Saved {len(new_rows)} jobs")
+        # --- TELEGRAM ---
+        for job in jobs[:5]:
+            await send_telegram(
+                session,
+                f"🤖 JOB ALERT\n\n{job['title']}\n{job['link']}"
+            )
 
-    print("✅ Run completed safely")
+    log("✅ Run Completed Successfully")
 
 # ==========================================
-# 7. SAFE ENTRY POINT
+# ENTRY WITH HARD GLOBAL TIMEOUT
 # ==========================================
 
 if __name__ == "__main__":
     try:
         asyncio.run(asyncio.wait_for(main(), timeout=GLOBAL_TIMEOUT))
     except asyncio.TimeoutError:
-        print("⏰ Script safely timed out (15 min limit).")
+        log("⏰ Global timeout reached. Exiting safely.")
+    except Exception as e:
+        log(f"❌ Fatal Error: {e}")
