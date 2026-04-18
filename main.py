@@ -82,7 +82,13 @@ async def search_ddg(query):
         except Exception as e:
             print(f"⚠️ DDG Error: {e}", flush=True)
             return []
-    return await asyncio.to_thread(sync_search)
+    
+    try:
+        # Forces a strict 20-second timeout on the background thread
+        return await asyncio.wait_for(asyncio.to_thread(sync_search), timeout=20.0)
+    except asyncio.TimeoutError:
+        print(f"⏳ DDG Search Timeout for query: {query}", flush=True)
+        return []
 
 async def search_google(session, query, start_page):
     cred = get_search_cred()
