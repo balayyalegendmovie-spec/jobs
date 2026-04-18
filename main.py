@@ -181,7 +181,7 @@ async def main():
     existing_links = set()
     if sheet:
         try:
-            existing_links = set(sheet.col_values(3)[1:])
+            existing_links = set(sheet.col_values(5)[1:])
         except Exception as e:
             log(f"⚠️ Failed loading existing links: {e}")
 
@@ -241,15 +241,29 @@ async def main():
 
         # --- SAVE ---
         if sheet and jobs:
-            try:
-                rows = [
-                    ["New", j["title"], j["link"], str(datetime.now())]
-                    for j in jobs
-                ]
-                await asyncio.to_thread(sheet.append_rows, rows)
-                log(f"💾 Saved {len(rows)} jobs to sheet")
-            except Exception as e:
-                log(f"⚠️ Sheet Write Error: {e}")
+    try:
+        rows = []
+
+        for j in jobs:
+            row = [
+                "New",                 # Status
+                "Not AI Filtered",     # AI Verdict
+                j["title"],            # Role
+                "Unknown",             # Company
+                j["link"],             # Link
+                str(datetime.now()),   # Date
+                "0%",                  # Match %
+                "0%",                  # Suitability %
+                ""                     # Cover Letter
+            ]
+            rows.append(row)
+
+        await asyncio.to_thread(sheet.append_rows, rows, value_input_option="USER_ENTERED")
+
+        log(f"💾 Saved {len(rows)} jobs to sheet")
+
+    except Exception as e:
+        log(f"⚠️ Sheet Write Error: {e}")
 
         # --- TELEGRAM ---
         for job in jobs[:5]:
